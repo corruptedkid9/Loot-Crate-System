@@ -1,0 +1,259 @@
+Sure, I'll break down what this code does in a step-by-step manner:
+
+```lua
+-- Gets the local player
+local player = game.Players.LocalPlayer
+
+-- Retrieves services and modules from Roblox
+local RP = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local runService = game:GetService("RunService")
+
+-- Requires modules for handling items and loot
+local itemModule = require(RP:WaitForChild("Modules").ItemHandler)
+local lootHandler = require(RP:WaitForChild("Modules").LootHandler)
+local errorHandler = require(RP:WaitForChild("Modules").ErrorScript)
+
+-- Accesses item colors and rarity tables from the itemModule
+local ItemColors = itemModule.ItemColors
+local rarityTable = itemModule.RarityTable
+
+-- Gets the player's gems value and crate UI components
+local playerGems = player:WaitForChild("leaderstats"):WaitForChild("Gems")
+local crateChance = script.Parent:WaitForChild("CrateChance")
+local crateOpen = script.Parent:WaitForChild("CrateOpen")
+local crateReward = script.Parent:WaitForChild("CrateReward")
+local crates = crateChance.Crate
+local holder = crates.ListHolder
+local template = holder.Item
+local templateX = template.AbsoluteSize.X
+local spinButton = crateOpen.SpinButton
+local playerMapReached = player:WaitForChild("MapReached")
+local lootDecision = lootHandler[playerMapReached.Value]
+
+-- Waits until the playerMapReached value is loaded and is not empty so it doesnt error further below
+repeat wait(.1) until playerMapReached.Value ~= ""
+print(playerMapReached.Value)
+
+-- Gets the sound for UI hover
+local sound = crateChance.Parent.UIHover
+
+-- Initializes variables for item management
+local CrateItemLength = 51
+local lastItem
+local order = 1
+local connection = nil
+local ItemDebounce = {}
+local ItemsTable = {}
+local lastItemIndex = CrateItemLength - 5
+local image, name, rare = nil, nil, nil
+
+-- Updates the gem count display each time when the player's gems change
+playerGems:GetPropertyChangedSignal("Value"):Connect(function()
+	crateOpen.GemsLabel50.Text = playerGems.Value.."/50"
+	crateOpen:WaitForChild("GemFrame").GemsLabel.Text = "Gems: "..playerGems.Value
+end)
+
+-- Calculates the sum of weights for loot items
+local function returnSumOfWeight(lootTable)
+	local sum = 0
+	for _, entry in pairs(lootTable) do
+		sum = sum + entry.Weight
+	end
+	return sum
+end
+
+-- Returns a random item from a loot table based on weights
+local getRandomItem = function(lootTable)
+	local randomNumber = math.random(returnSumOfWeight(lootTable))
+	for index, entry in pairs(lootTable) do
+		if randomNumber <= entry.Weight then
+			return index
+		else
+			randomNumber = randomNumber - entry.Weight
+		end
+	end
+end
+
+-- Removes all items from a list except for the item template
+function DestroyItems(list)
+	for i, items in pairs(list:GetChildren()) do
+		if items.Name ~= "Item" and items:IsA("ImageButton") then
+			items:Destroy()
+		end
+	end
+end
+
+-- Gets the total weight of loot items for decision-making
+local function GetWeightSum(lootTable)
+	local sum = 0
+	for i, loot in pairs(lootDecision) do
+		sum += loot.Weight
+	end
+	return sum
+end
+
+-- Calculates the percentage drop rate of an item based on its weight
+local function GetPercentage(sum, weight)
+	local calculation = (weight/sum) * 100
+	return math.round(calculation)
+end
+
+-- Clones and displays possible items in the loot list
+function ClonePossibleItems()
+	DestroyItems(crateOpen)
+	
+	lootDecision = lootHandler[playerMapReached.Value]
+	print(playerMapReached.Value)
+	print(lootDecision)
+	
+	for name, data in pairs(lootDecision) do
+		local weight = data.Weight
+		local CloneItem = crateOpen:WaitForChild("LootList").Item:Clone()
+		local findItem = RP.Items:FindFirstChild(name)
+		local rarity = findItem.Rarity
+		local WeightSum = GetWeightSum(lootDecision)
+		local Itemweight = weight
+
+		local calculateDropRate
+
+		CloneItem.Parent = crateOpen.LootList
+		CloneItem.ItemNameLabel.Text = name
+		CloneItem.DropRateLabel.Text = tostring(GetPercentage(WeightSum, Itemweight)).."%"
+		CloneItem.Visible = true
+		CloneItem.ActualImage.Image = findItem.Images.Image
+		CloneItem.BackgroundColor3 = ItemColors[rarity.Value]["Background"]
+		CloneItem.UIStroke.Color = ItemColors[rarity.Value]["Border"]
+		CloneItem.Name = name
+		CloneItem.LayoutOrder = ItemColors[rarity.Value]["LayoutOrder"]
+	end
+end
+
+-- Calls the function to clone and display possible items
+ClonePossibleItems()
+
+-- Clones items to be displayed in the loot crate spin
+function CloneItems(i)
+	local statement = true
+	local LootTable = lootHandler[playerMapReached.Value]
+	local item = getRandomItem(LootTable)
+	local FindItem = RP.Items:FindFirstChild(item)
+	local rarity = FindItem.Rarity.Value
+
+	if rarity ~= "Legendary" then
+		rarity = rarityTable[math.random(1, #rarityTable)]
+	else
+		rarity = "Legendary"
+	end
+
+	local itemTemplate = holder.Item:Clone()
+	itemTemplate.ActualImage.Image = FindItem.Images.Image
+	itemTemplate.ItemNameLabel.Text = tostring(item)
+	itemTemplate.BackgroundColor3 = ItemColors[rarity]["Background"]
+	itemTemplate.UIStroke.Color = ItemColors[rarity]["Border"]
+	itemTemplate.LayoutOrder = i
+	itemTemplate.Parent = holder
+	itemTemplate.Name = tostring(item)
+	itemTemplate.Visible = true
+
+	if i == lastItemIndex-2 then
+		if image then
+			crateChance.Visible = true
+			print("Chose the winner item: "..name)
+			itemTemplate.ActualImage.Image = image
+			itemTemplate.ItemNameLabel.Text = name
+			itemTemplate.BackgroundColor3 = ItemColors[rare]["Background"]
+			itemTemplate.UIStroke.Color = ItemColors[rare]["Border"]
+			lastItem = itemTemplate
+		else
+			warn("Player is not high enough level!")
+			statement = false
+			crateChance.Visible = false
+		end
+	end
+	
+	return statement
+end
+
+-- Inserts items from the holder to the ItemsTable for spinning
+function InsertItems()
+	for i, v in pairs(holder:GetChildren()) do
+		if v:IsA("ImageButton") then
+			if v.LayoutOrder > 23 and v.LayoutOrder < lastItemIndex-1 then
+				table.insert(ItemsTable, v)
+			end	
+		end
+	end
+end
+
+-- Starts the spinning animation for the loot crate
+function StartSpin()
+	print("Spin started")
+	InsertItems()
+
+	if connection then -- this is to terminate stacking loops
+		connection:Disconnect()
+	end
+	local spinTime = math.random(7, 8)
+	local tweenInfo = TweenInfo.new(spinTime, Enum.EasingStyle.Quart)
+	local randomDepth = 1000
+
+	-- Calculate the target midpoint for spinning
+	local endCrate = lastItem
+	local startX = crates.AbsolutePosition.X + crates.AbsoluteSize.X/2
+	local endX = endCrate.AbsolutePosition.X + endCrate.AbsoluteSize.X/2
+	local xDifference = endX - startX
+	local yDifference = endCrate.AbsolutePosition.Y - holder.AbsolutePosition.Y
+	local templateXBound = templateX/2.5
+	local landOffset = math.random(-templateXBound+randomDepth, templateXBound+randomDepth)-randomDepth
+	local landPosition = holder.Position - UDim2.new(0, xDifference + landOffset, 0, 0)
+
+	local crateSizeX = crates.AbsoluteSize.X
+	-- Creates and plays the tween
+	local SpinTween = TweenService:Create(holder, tweenInfo, {Position = landPosition})
+	SpinTween:Play()
+
+	ItemDebounce = {}
+	local lineX = crateChance.MiddleLine.AbsolutePosition.X
+-- create a new thread so it doesnt stop the rest of the code
+	coroutine.wrap(function()
+		repeat runService.RenderStepped:Wait()
+			local CurrentItem = ItemsTable[1]
+
+			if CurrentItem then
+				print(#ItemsTable)
+				local itemPositionX = CurrentItem.AbsolutePosition.X
+
+				if itemPositionX <= lineX then 
+					sound:Play() -- play a sound each time it passes through an item
+					table.remove(ItemsTable, 1)
+				end 
+			end
+		until #ItemsTable <= 0
+	end)()
+
+	-- Wait for the tween to complete
+	SpinTween.Completed:Wait()
+	local rewardSound = crateReward.Parent.Reward
+	rewardSound:Play()
+
+	-- Displays the reward
+	crateChance.Visible = false
+	crateReward.Visible = true
+
+	local crateRewardItem = crateReward.Item
+	local FindItem = RP.Items:FindFirstChild(lastItem.ItemNameLabel.Text)
+	print(FindItem.Name)
+
+	crateRewardItem.ActualImage.Image = FindItem.Images.Image
+	crateRewardItem.ItemNameLabel.Text = FindItem.Name
+	crateRewardItem.BackgroundColor3 = ItemColors[rare]["Background"]
+	crateRewardItem.UIStroke.Color = ItemColors[rare]["Border"]
+	crateReward.YouGotLabel.Text = "You got "..FindItem.Name.."!"
+
+	crateReward.ClaimButton.MouseButton1Click:Connect(function()
+		crateReward.Visible = false
+		crateOpen.Visible = true
+		holder.Position = UDim2.new(0,0,0,0)
+	end)
+end
